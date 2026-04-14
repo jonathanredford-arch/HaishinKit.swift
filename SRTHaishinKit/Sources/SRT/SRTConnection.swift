@@ -3,6 +3,18 @@ import Foundation
 import HaishinKit
 import libsrt
 
+// MARK: - SRTDataObserver Protocol
+
+/// Protocol for observing raw MPEG-TS data received over SRT.
+/// Implement this to analyze transport stream packets before decoding.
+public protocol SRTDataObserver: AnyObject, Sendable {
+    /// Called when raw MPEG-TS data is received from the SRT connection.
+    /// - Parameters:
+    ///   - connection: The SRT connection that received the data.
+    ///   - data: Raw MPEG-TS transport stream data.
+    func srtConnection(_ connection: SRTConnection, didReceive data: Data)
+}
+
 /// An actor that provides the interface to control a SRT connection.
 ///
 /// Supports a one-to-one connection. Multiple connections cannot be established.
@@ -11,7 +23,7 @@ public actor SRTConnection: NetworkConnection {
     public enum Error: Swift.Error {
         /// An invalid internal stare.
         case invalidState
-        /// The uri isn’t supported.
+        /// The uri isn't supported.
         case unsupportedUri(_ uri: URL?)
         /// The failed to connect.
         case failedToConnect(_ reason: SRTRejectReason)
@@ -29,6 +41,9 @@ public actor SRTConnection: NetworkConnection {
             return await socket?.performanceData
         }
     }
+    
+    /// Observer for raw MPEG-TS data. Set this to receive transport stream packets for analysis.
+    public weak var dataObserver: (any SRTDataObserver)?
 
     private var socket: SRTSocket?
     private var streams: [SRTStream] = []
@@ -162,6 +177,9 @@ public actor SRTConnection: NetworkConnection {
                 return
             }
             for await data in await socket.inputs {
+                // Notify observer of raw TS data before decoding
+                dataObserver?.srtConnection(self, didReceive: data)
+                // Pass to stream for decoding
                 await streams.first?.doInput(data)
             }
             await close()
