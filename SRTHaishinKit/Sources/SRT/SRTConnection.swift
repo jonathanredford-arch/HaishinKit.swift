@@ -44,6 +44,11 @@ public actor SRTConnection: NetworkConnection {
     
     /// Observer for raw MPEG-TS data. Set this to receive transport stream packets for analysis.
     public weak var dataObserver: (any SRTDataObserver)?
+    
+    /// Sets the data observer for receiving raw MPEG-TS packets.
+    public func setDataObserver(_ observer: (any SRTDataObserver)?) {
+        self.dataObserver = observer
+    }
 
     private var socket: SRTSocket?
     private var streams: [SRTStream] = []
