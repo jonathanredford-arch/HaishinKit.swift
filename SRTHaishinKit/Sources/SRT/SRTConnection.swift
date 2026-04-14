@@ -177,17 +177,23 @@ public actor SRTConnection: NetworkConnection {
     }
 
     func recv() {
-        Task {
-            guard let socket else {
+        Task { [weak self] in
+            guard let self, let socket = await self.socket else {
                 return
             }
             for await data in await socket.inputs {
-                // Notify observer of raw TS data before decoding
-                dataObserver?.srtConnection(self, didReceive: data)
+                // Capture observer reference safely
+                let observer = await self.dataObserver
+                // Notify observer of raw TS data before decoding (on a detached task to avoid actor isolation issues)
+                if let observer {
+                    Task.detached { [data] in
+                        observer.srtConnection(self, didReceive: data)
+                    }
+                }
                 // Pass to stream for decoding
-                await streams.first?.doInput(data)
+                await self.streams.first?.doInput(data)
             }
-            await close()
+            await self.close()
         }
     }
 
