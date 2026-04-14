@@ -12,7 +12,8 @@ public protocol SRTDataObserver: AnyObject, Sendable {
     /// - Parameters:
     ///   - connection: The SRT connection that received the data.
     ///   - data: Raw MPEG-TS transport stream data.
-    func srtConnection(_ connection: SRTConnection, didReceive data: Data)
+    /// - Note: This method is called from a detached task, not on the main actor.
+    nonisolated func srtConnection(_ connection: SRTConnection, didReceive data: Data)
 }
 
 /// An actor that provides the interface to control a SRT connection.
