@@ -2,8 +2,8 @@ import CoreMedia
 import Foundation
 
 final actor MediaLink {
-    static let capacity = 120
-    static let duration: TimeInterval = 0.3  // 300ms initial buffer for smoother playback
+    static let capacity = 90
+    static let duration: TimeInterval = 0.0
 
     var dequeue: AsyncStream<CMSampleBuffer> {
         AsyncStream { continutation in
