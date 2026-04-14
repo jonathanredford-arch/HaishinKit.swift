@@ -187,8 +187,10 @@ public actor SRTConnection: NetworkConnection {
                 let observer = await self.dataObserver
                 // Notify observer of raw TS data before decoding (on a detached task to avoid actor isolation issues)
                 if let observer {
-                    Task.detached { [data] in
-                        observer.srtConnection(self, didReceive: data)
+                    // Capture self strongly for the detached task since we need to pass it to the observer
+                    let connection = self
+                    Task.detached { [data, connection] in
+                        observer.srtConnection(connection, didReceive: data)
                     }
                 }
                 // Pass to stream for decoding
