@@ -36,8 +36,18 @@ final actor AudioPlayerNode {
 
     func enqueue(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) async {
         if format != audioBuffer.format {
+            // Only report a *change*. The first assignment is ordinary setup
+            // and `AudioPlayer.connect` already reports the negotiated
+            // formats; a mid-stream switch is real signal worth seeing.
+            let isChange = format != nil
             format = audioBuffer.format
-            HKDiagnostics.log("Audio", "Format changed: \(audioBuffer.format)")
+            if isChange {
+                HKDiagnostics.log(
+                    "Audio",
+                    "stream audio format changed mid-session → "
+                    + "\(Int(audioBuffer.format.sampleRate)) Hz "
+                    + "\(audioBuffer.format.channelCount)ch (reconnecting node)")
+            }
             await player?.connect(self, format: format)
         }
         guard let audioBuffer = audioBuffer as? AVAudioPCMBuffer, await player?.isConnected(self) == true else {
@@ -46,7 +56,6 @@ final actor AudioPlayerNode {
         scheduledAudioBuffers += 1
         if !isPaused && !playerNode.isPlaying && Self.bufferCounts <= scheduledAudioBuffers {
             playerNode.play()
-            HKDiagnostics.log("Audio", "playerNode.play() called, scheduled: \(scheduledAudioBuffers)")
         }
         // Use synchronous scheduleBuffer — the async overload creates a Task that
         // lives until the buffer finishes *playing*, accumulating thousands of

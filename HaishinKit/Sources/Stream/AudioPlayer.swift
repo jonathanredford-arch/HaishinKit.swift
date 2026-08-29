@@ -21,8 +21,8 @@ public final actor AudioPlayer {
             return
         }
         if let format {
-            HKDiagnostics.log("Audio", "Connecting node, format: \(format)")
             audioEngine.connect(avPlayerNode, to: audioEngine.outputNode, format: format)
+            var startError: String?
             if !audioEngine.isRunning {
                 do {
                     #if os(iOS) || os(tvOS) || os(visionOS)
@@ -30,16 +30,28 @@ public final actor AudioPlayer {
                     if !session.isOtherAudioPlaying {
                         try session.setActive(true)
                     }
-                    HKDiagnostics.log("Engine", "Session active: \(session.isOtherAudioPlaying == false), category: \(session.category.rawValue), sampleRate: \(session.sampleRate)")
                     #endif
                     try audioEngine.start()
-                    HKDiagnostics.log("Engine", "Audio engine started, outputFormat: \(audioEngine.outputNode.outputFormat(forBus: 0))")
                 } catch {
+                    startError = "\(error)"
                     HKDiagnostics.log("Error", "Audio engine failed to start: \(error)")
                 }
             }
             connected[playerNode] = true
-            HKDiagnostics.log("Audio", "Node connected, engine isRunning: \(audioEngine.isRunning)")
+            // One line instead of the four this used to emit. Reports the
+            // negotiated formats on both sides of the connection, which is
+            // the first thing to check when audio is missing or wrong: a
+            // stream/engine sample-rate or channel-count mismatch is the
+            // usual cause, and it is invisible without both numbers.
+            if startError == nil {
+                let out = audioEngine.outputNode.outputFormat(forBus: 0)
+                HKDiagnostics.log(
+                    "Audio",
+                    "running — stream \(Int(format.sampleRate)) Hz "
+                    + "\(format.channelCount)ch → engine \(Int(out.sampleRate)) Hz "
+                    + "\(out.channelCount)ch, engine isRunning: \(audioEngine.isRunning)"
+                )
+            }
         } else {
             if audioEngine.isRunning {
                 audioEngine.stop()

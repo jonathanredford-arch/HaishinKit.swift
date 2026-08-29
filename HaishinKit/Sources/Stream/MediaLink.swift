@@ -51,6 +51,17 @@ final actor MediaLink {
             duration = -0.3 // jitter buffer head start (slightly larger for PLL stability)
         }
         enqueueCount += 1
+        // Positive confirmation that decoded video is reaching the renderer.
+        // Without it, "no video" and "video decoding fine but not displayed"
+        // look identical in the log — and the failure modes are unrelated.
+        if enqueueCount == 1 {
+            let dims = sampleBuffer.formatDescription?.dimensions
+            HKDiagnostics.log(
+                "Video",
+                "first decoded frame reached the renderer"
+                + (dims.map { " — \($0.width)x\($0.height)" } ?? "")
+            )
+        }
         do {
             try storage?.enqueue(sampleBuffer)
         } catch {
