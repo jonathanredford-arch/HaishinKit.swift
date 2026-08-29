@@ -10,9 +10,9 @@ package struct ADTSHeader: Equatable {
     var id: UInt8 = 0
     var layer: UInt8 = 0
     var protectionAbsent = false
-    var profile: UInt8 = 0
-    var sampleFrequencyIndex: UInt8 = 0
-    var channelConfiguration: UInt8 = 0
+    package var profile: UInt8 = 0
+    package var sampleFrequencyIndex: UInt8 = 0
+    package var channelConfiguration: UInt8 = 0
     var originalOrCopy = false
     var home = false
     var copyrightIdBit = false

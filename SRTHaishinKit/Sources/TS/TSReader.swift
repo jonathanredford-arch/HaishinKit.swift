@@ -28,6 +28,16 @@ final class TSReader {
             for pmt in pmt.values {
                 for data in pmt.elementaryStreamSpecificData where esSpecData[data.elementaryPID] != data {
                     esSpecData[data.elementaryPID] = data
+                    // Report what the demux believes the program contains.
+                    // `ESStreamType` only covers the types this reader can
+                    // handle, so an audio track it doesn't recognise shows up
+                    // here as a raw value and is then silently ignored — the
+                    // failure is otherwise invisible.
+                    HKDiagnostics.log(
+                        "TS",
+                        "PMT: PID 0x\(String(data.elementaryPID, radix: 16)) "
+                        + "streamType \(data.streamType) "
+                        + "(raw 0x\(String(data.streamType.rawValue, radix: 16)))")
                 }
             }
             if logger.isEnabledFor(level: .trace) {
@@ -35,6 +45,9 @@ final class TSReader {
             }
         }
     }
+    /// One-shot diagnostics so the audio chain can be traced without spam.
+    private var loggedFirstAudioSample = false
+    private var loggedAudioFormatFailure = false
     private var programs: [UInt16: UInt16] = [:]
     private var esSpecData: [UInt16: ESSpecificData] = [:]
     private var continuation: AsyncStream<(UInt16, CMSampleBuffer)>.Continuation? {
@@ -110,6 +123,24 @@ final class TSReader {
         if let formatDescription, formatDescriptions[id] != formatDescription {
             formatDescriptions[id] = formatDescription
         }
+        // A nil format description on audio is fatal but silent: the sample
+        // buffer is still produced, and IncomingStream.append switches on
+        // `formatDescription?.mediaType`, so it matches neither .audio nor
+        // .video and is dropped without a word. ADTSHeader.makeFormatDescription
+        // returns nil whenever the profile, sampling-frequency index or
+        // channel configuration falls outside what it models.
+        if data.streamType == .adtsAac, formatDescriptions[id] == nil, !loggedAudioFormatFailure {
+            loggedAudioFormatFailure = true
+            let head = [UInt8](pes.data.prefix(4))
+            let hex = head.map { String(format: "%02X", $0) }.joined(separator: " ")
+            let adts = ADTSHeader(data: pes.data)
+            HKDiagnostics.log(
+                "Error",
+                "audio format description could not be built — first bytes [\(hex)], "
+                + "profile \(adts.profile), sfIndex \(adts.sampleFrequencyIndex), "
+                + "channelConfig \(adts.channelConfiguration). "
+                + "Audio will be dropped downstream.")
+        }
         var isNotSync = true
         switch data.streamType {
         case .h264:
@@ -139,6 +170,17 @@ final class TSReader {
         )
         sampleBuffer?.isNotSync = isNotSync
         previousPresentationTimeStamps[id] = sampleBuffer?.presentationTimeStamp
+
+        if data.streamType == .adtsAac, !loggedFirstAudioSample {
+            loggedFirstAudioSample = true
+            let mt = sampleBuffer?.formatDescription?.mediaType
+            HKDiagnostics.log(
+                "TS",
+                "first audio sample buffer from PID 0x\(String(id, radix: 16)): "
+                + "\(sampleBuffer == nil ? "nil buffer" : "built"), "
+                + "mediaType \(mt.map { "\($0)" } ?? "nil")")
+        }
+
         return sampleBuffer
     }
 

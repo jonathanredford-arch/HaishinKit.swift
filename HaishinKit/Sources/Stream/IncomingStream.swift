@@ -30,13 +30,30 @@ package final actor IncomingStream {
     public func append(_ buffer: CMSampleBuffer) {
         switch buffer.formatDescription?.mediaType {
         case .audio:
+            if !loggedFirstAudioAppend {
+                loggedFirstAudioAppend = true
+                HKDiagnostics.log("Audio", "first audio sample buffer reached the codec")
+            }
             audioCodec.append(buffer)
         case .video:
             videoCodec.append(buffer)
         default:
-            break
+            // Neither audio nor video, which in practice means the sample
+            // buffer has no format description. Silently discarding these is
+            // how audio disappears without a trace.
+            droppedUnclassified += 1
+            if droppedUnclassified == 1 || droppedUnclassified % 200 == 0 {
+                HKDiagnostics.log(
+                    "Error",
+                    "dropped \(droppedUnclassified) sample buffer(s) with no usable "
+                    + "format description (mediaType "
+                    + "\(buffer.formatDescription.map { "\($0.mediaType)" } ?? "nil"))")
+            }
         }
     }
+
+    private var loggedFirstAudioAppend = false
+    private var droppedUnclassified = 0
 
     /// Appends an audio buffer for playback.
     public func append(_ buffer: AVAudioBuffer, when: AVAudioTime) {
@@ -73,8 +90,26 @@ extension IncomingStream: AsyncRunner {
             }
         }
         Task {
+            if audioPlayerNode == nil {
+                // The player node is created by attachAudioPlayer. If the
+                // runner starts first there is nothing to start, and every
+                // decoded buffer below is sent to a nil optional — audio is
+                // decoded and then thrown away in silence.
+                HKDiagnostics.log(
+                    "Error",
+                    "audio runner started with no player node attached — "
+                    + "attachAudioPlayer must be called before play()")
+            }
             await audioPlayerNode?.startRunning()
+            var decoded = 0
             for await audio in audioCodec.outputStream {
+                decoded += 1
+                if decoded == 1 {
+                    HKDiagnostics.log(
+                        "Audio",
+                        "first decoded audio buffer from the codec"
+                        + (audioPlayerNode == nil ? " — but no player node, discarding" : ""))
+                }
                 await audioPlayerNode?.enqueue(audio.0, when: audio.1)
             }
         }
