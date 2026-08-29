@@ -73,8 +73,25 @@ final class VideoCodec {
             }
         } catch {
             logger.warn(error)
+            // Also surface it to the host app. `logger` goes to HaishinKit's
+            // internal Logboard sink, which the app never sees — so a
+            // VideoToolbox failure (bad SPS/PPS, unsupported profile, a
+            // corrupt access unit) produced a black picture with nothing
+            // logged anywhere the operator could find it. Rate-limited
+            // because a broken stream fails per frame.
+            videoDecodeErrors += 1
+            if videoDecodeErrors == 1 || videoDecodeErrors % 100 == 0 {
+                HKDiagnostics.log(
+                    "Error",
+                    "Video decode failed (\(videoDecodeErrors) total): \(error) " +
+                    "[compressed=\(sampleBuffer.formatDescription?.isCompressed == true)]"
+                )
+            }
         }
     }
+
+    /// Count of `append` failures, used to rate-limit the diagnostic above.
+    private var videoDecodeErrors = 0
 
     func makeImageBufferAttributes(_ mode: VTSessionMode) -> [NSString: AnyObject]? {
         switch mode {

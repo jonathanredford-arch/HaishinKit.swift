@@ -30,6 +30,9 @@ final actor MediaLink {
     private var renderCount = 0
     private var lastDiagTime: TimeInterval = 0
     private var lastWallTime: TimeInterval = 0
+    /// True while the jitter buffer is starving or the PLL is saturated, so
+    /// recovery gets reported once instead of the episode trailing off.
+    private var wasUnhealthy = false
 
     init() {
         do {
@@ -120,12 +123,43 @@ extension MediaLink: AsyncRunner {
                         break
                     }
                 }
-                // Periodic diagnostics (every ~2 seconds)
+                // Jitter-buffer diagnostics.
+                //
+                // Report only when the buffer is actually in trouble, not
+                // every 2 seconds regardless. This used to emit a line per 2 s
+                // for the life of the session, which in a monitoring tool's
+                // log crowded out the connection and decode events an operator
+                // is looking for — and it was the only thing visible in
+                // release builds, where everything else was #if DEBUG.
+                //
+                // "In trouble" means the buffer sits below the critical
+                // threshold (about to underrun, aggressive correction) or the
+                // rate correction has saturated, i.e. the PLL can no longer
+                // keep up with clock drift. Recovery is reported once so the
+                // log shows the episode closing rather than trailing off.
                 if currentTime - lastDiagTime >= 2.0 {
                     let bl = enqueueCount - renderCount
                     let g = bl < Self.criticalBufferThreshold ? Self.pllGainAggressive : Self.pllGainGentle
                     let corr = min(max(1.0 + Double(bl - Self.targetBufferFrames) * g, 0.80), 1.05)
-                    HKDiagnostics.log("Video", "in:\(enqueueCount) out:\(renderCount) buf:\(bl) pll:\(String(format: "%.3f", corr)) time:\(String(format: "%.2f", currentTime))")
+                    let saturated = corr <= 0.801 || corr >= 1.049
+                    let starving = bl < Self.criticalBufferThreshold
+                    if starving || saturated {
+                        wasUnhealthy = true
+                        HKDiagnostics.log(
+                            "Video",
+                            "jitter buffer \(starving ? "starving" : "rate-limited"): " +
+                            "buf:\(bl)/\(Self.targetBufferFrames) " +
+                            "pll:\(String(format: "%.3f", corr)) " +
+                            "in:\(enqueueCount) out:\(renderCount)"
+                        )
+                    } else if wasUnhealthy {
+                        wasUnhealthy = false
+                        HKDiagnostics.log(
+                            "Video",
+                            "jitter buffer recovered: buf:\(bl)/\(Self.targetBufferFrames) " +
+                            "pll:\(String(format: "%.3f", corr))"
+                        )
+                    }
                     lastDiagTime = currentTime
                 }
             }

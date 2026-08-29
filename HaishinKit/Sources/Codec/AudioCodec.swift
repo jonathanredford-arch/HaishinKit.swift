@@ -47,6 +47,9 @@ final class AudioCodec {
     private var outputBuffers: [AVAudioBuffer] = []
     private var audioConverter: AVAudioConverter?
     private var inputBuffersCursor = AudioCodec.defaultInputBuffersCursor
+    /// Count of AAC frames discarded by the capacity guard in `append`,
+    /// used to rate-limit its diagnostic.
+    private var audioFramesDropped = 0
 
     func append(_ sampleBuffer: CMSampleBuffer) {
         guard isRunning else {
@@ -78,6 +81,18 @@ final class AudioCodec {
                 guard byteCount > 0,
                       UInt32(byteCount) <= buffer.byteCapacity
                 else {
+                    // Report it: dropping frames silently turns a bitstream
+                    // problem into "audio sounds slightly wrong", with no way
+                    // to tell that anything was discarded. Rate-limited
+                    // because a persistently bad stream trips this per frame.
+                    audioFramesDropped += 1
+                    if audioFramesDropped == 1 || audioFramesDropped % 100 == 0 {
+                        HKDiagnostics.log(
+                            "Error",
+                            "Dropped oversized/empty AAC frame (\(audioFramesDropped) total): " +
+                            "payload \(byteCount) bytes vs capacity \(buffer.byteCapacity)"
+                        )
+                    }
                     offset += sampleSize
                     continue
                 }
