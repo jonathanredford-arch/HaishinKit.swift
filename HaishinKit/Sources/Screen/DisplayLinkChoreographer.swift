@@ -34,6 +34,7 @@ final class DisplayLink: NSObject, @unchecked Sendable {
     private var selector: Selector?
     private var displayLink: CVDisplayLink?
     private var frameInterval = 0.0
+    private var lastCallbackTime: Double = 0
     private weak var delegate: NSObject?
 
     deinit {
@@ -52,10 +53,21 @@ final class DisplayLink: NSObject, @unchecked Sendable {
             guard let self else {
                 return kCVReturnSuccess
             }
-            if frameInterval == 0 || frameInterval <= inNow.pointee.timestamp - self.timestamp {
-                self.timestamp = Double(inNow.pointee.timestamp)
-                self.targetTimestamp = self.timestamp + frameInterval
+            let now = ProcessInfo.processInfo.systemUptime
+            let lastTime = self.lastCallbackTime
+
+            if lastTime == 0 || self.frameInterval == 0 || now - lastTime >= self.frameInterval {
+                if lastTime > 0 {
+                    // Normal tick: delta = real elapsed time since last callback
+                    self.timestamp = lastTime
+                    self.targetTimestamp = now
+                } else {
+                    // First tick: estimate one frame interval
+                    self.timestamp = now
+                    self.targetTimestamp = now + (1.0 / 60.0)
+                }
                 _ = self.delegate?.perform(self.selector, with: self)
+                self.lastCallbackTime = now
             }
             return kCVReturnSuccess
         }
@@ -99,7 +111,10 @@ final class DisplayLinkChoreographer: NSObject {
     private static let preferredFramesPerSecond = 0
 
     var updateFrames: AsyncStream<DisplayLinkTime> {
-        AsyncStream { continuation in
+        // Only buffer the latest tick — if the consumer (MediaLink actor) can't
+        // keep up with 60 fps, stale ticks are dropped instead of piling up.
+        // The consumer tracks absolute wall time to account for dropped ticks.
+        AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             self.continutation = continuation
         }
     }

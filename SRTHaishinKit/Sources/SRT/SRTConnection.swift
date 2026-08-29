@@ -180,38 +180,32 @@ public actor SRTConnection: NetworkConnection {
     func recv() {
         Task { [weak self] in
             guard let self, let socket = await self.socket else {
-                #if DEBUG
-                print("[SRTConnection] recv() - no socket available")
-                #endif
                 return
             }
-            #if DEBUG
-            print("[SRTConnection] recv() - starting to receive data from socket")
-            var packetCount = 0
-            #endif
-            for await data in await socket.inputs {
-                #if DEBUG
-                packetCount += 1
-                if packetCount <= 5 || packetCount % 100 == 0 {
-                    print("[SRTConnection] recv() - received \(data.count) bytes (packet #\(packetCount))")
+            // Cache references before the hot loop to avoid per-packet actor hops
+            let observer = await self.dataObserver
+            let stream = await self.streams.first
+
+            // Decouple socket recv from stream processing via an async buffer.
+            // This prevents the recv loop from blocking on SRTStream actor hops.
+            let (dataStream, dataContinuation) = AsyncStream.makeStream(of: Data.self, bufferingPolicy: .unbounded)
+
+            // Consumer: processes data sequentially on SRTStream actor
+            Task {
+                for await data in dataStream {
+                    await stream?.doInput(data)
                 }
-                #endif
-                // Capture observer reference safely
-                let observer = await self.dataObserver
-                // Notify observer of raw TS data before decoding (on a detached task to avoid actor isolation issues)
-                if let observer {
-                    // Capture self strongly for the detached task since we need to pass it to the observer
-                    let connection = self
-                    Task.detached { [data, connection] in
-                        observer.srtConnection(connection, didReceive: data)
-                    }
-                }
-                // Pass to stream for decoding
-                await self.streams.first?.doInput(data)
             }
-            #if DEBUG
-            print("[SRTConnection] recv() - socket.inputs ended, closing connection")
-            #endif
+
+            // Producer: receives from socket without blocking on actor hops
+            var packetCount = 0
+            for await data in await socket.inputs {
+                observer?.srtConnection(self, didReceive: data)
+                dataContinuation.yield(data)
+                packetCount += 1
+            }
+            HKDiagnostics.log("SRT", "recv loop exited after \(packetCount) packets, socket status: \(await socket.status)")
+            dataContinuation.finish()
             await self.close()
         }
     }

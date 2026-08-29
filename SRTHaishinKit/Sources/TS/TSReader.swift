@@ -113,12 +113,16 @@ final class TSReader {
         var isNotSync = true
         switch data.streamType {
         case .h264:
+            // IMPORTANT: do NOT replace `pes.data` with only the first
+            // slice/IDR NAL. Streams that use multi-slice encoding (e.g.
+            // GeniusLive sports feeds with 17 slices per frame) require
+            // every slice to be present in the access unit; dropping
+            // slices 1..N-1 leaves VideoToolbox unable to decode any
+            // picture and the renderer stays black even though audio
+            // works. Mirror the .h265 path: read NALs only to inspect
+            // sync state and let the full Annex-B AU flow through to
+            // `ISOTypeBufferUtil.toNALFileFormat` for AVCC conversion.
             let units = nalUnitReader.read(&pes.data, type: H264NALUnit.self)
-            if let unit = units.first(where: { $0.type == .idr || $0.type == .slice }) {
-                var data = Data([0x00, 0x00, 0x00, 0x01])
-                data.append(unit.data)
-                pes.data = data
-            }
             isNotSync = !units.contains { $0.type == .idr }
         case .h265:
             let units = nalUnitReader.read(&pes.data, type: HEVCNALUnit.self)

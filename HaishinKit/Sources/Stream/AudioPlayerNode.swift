@@ -23,16 +23,7 @@ final actor AudioPlayerNode {
     private var scheduledAudioBuffers: Int = 0
     private var isBuffering = true
     private weak var player: AudioPlayer?
-    private var format: AVAudioFormat? {
-        didSet {
-            guard format != oldValue else {
-                return
-            }
-            Task { [format] in
-                await player?.connect(self, format: format)
-            }
-        }
-    }
+    private var format: AVAudioFormat?
 
     init(player: AudioPlayer, playerNode: AVAudioPlayerNode) {
         self.player = player
@@ -44,24 +35,34 @@ final actor AudioPlayerNode {
     }
 
     func enqueue(_ audioBuffer: AVAudioBuffer, when: AVAudioTime) async {
-        format = audioBuffer.format
+        if format != audioBuffer.format {
+            format = audioBuffer.format
+            HKDiagnostics.log("Audio", "Format changed: \(audioBuffer.format)")
+            await player?.connect(self, format: format)
+        }
         guard let audioBuffer = audioBuffer as? AVAudioPCMBuffer, await player?.isConnected(self) == true else {
             return
-        }
-        if !audioTime.hasAnchor {
-            audioTime.anchor(playerNode.lastRenderTime ?? AVAudioTime(hostTime: 0))
         }
         scheduledAudioBuffers += 1
         if !isPaused && !playerNode.isPlaying && Self.bufferCounts <= scheduledAudioBuffers {
             playerNode.play()
+            HKDiagnostics.log("Audio", "playerNode.play() called, scheduled: \(scheduledAudioBuffers)")
         }
-        Task {
-            audioTime.advanced(Int64(audioBuffer.frameLength))
-            await playerNode.scheduleBuffer(audioBuffer, at: audioTime.at)
-            scheduledAudioBuffers -= 1
-            if scheduledAudioBuffers == 0 {
-                isBuffering = true
+        // Use synchronous scheduleBuffer — the async overload creates a Task that
+        // lives until the buffer finishes *playing*, accumulating thousands of
+        // concurrent Tasks over minutes that contend on this actor and starve
+        // the decode pipeline.
+        playerNode.scheduleBuffer(audioBuffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            Task { [weak self] in
+                await self?.onBufferPlayedBack()
             }
+        }
+    }
+
+    private func onBufferPlayedBack() {
+        scheduledAudioBuffers -= 1
+        if scheduledAudioBuffers == 0 {
+            isBuffering = true
         }
     }
 
@@ -90,7 +91,13 @@ extension AudioPlayerNode: AsyncRunner {
             playerNode.reset()
         }
         audioTime.reset()
-        format = nil
+        if format != nil {
+            format = nil
+            Task { [weak self] in
+                guard let self else { return }
+                await player?.connect(self, format: nil)
+            }
+        }
         isRunning = false
     }
 }

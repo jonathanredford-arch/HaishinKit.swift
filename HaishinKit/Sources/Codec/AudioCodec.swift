@@ -65,6 +65,22 @@ final class AudioCodec {
                 }
                 let sampleSize = CMSampleBufferGetSampleSize(sampleBuffer, at: i)
                 let byteCount = sampleSize - ADTSHeader.size
+                // Guard against AAC frames whose payload exceeds the
+                // preallocated `AVAudioCompressedBuffer` capacity.
+                // `setByteLength` is implemented as a precondition in
+                // AVFAudio: passing a value larger than `byteCapacity`
+                // raises an NSException that crashes the app (no Swift
+                // recovery path). Drop the offending frame instead —
+                // a single skipped AAC packet is a far better outcome
+                // than a process abort, and the encoder typically
+                // recovers within milliseconds when the over-sized
+                // frame was the result of a bitstream glitch.
+                guard byteCount > 0,
+                      UInt32(byteCount) <= buffer.byteCapacity
+                else {
+                    offset += sampleSize
+                    continue
+                }
                 buffer.packetDescriptions?.pointee = AudioStreamPacketDescription(mStartOffset: 0, mVariableFramesInPacket: 0, mDataByteSize: UInt32(byteCount))
                 buffer.packetCount = 1
                 buffer.byteLength = UInt32(byteCount)

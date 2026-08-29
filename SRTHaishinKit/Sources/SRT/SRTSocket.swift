@@ -62,18 +62,8 @@ final actor SRTSocket {
         AsyncStream<Data> { continuation in
             // If Task.detached is not used, closing will result in a deadlock.
             Task.detached {
-                #if DEBUG
-                print("[SRTSocket] inputs - starting receive loop, connected: \(await self.connected), status: \(await self.status)")
-                #endif
                 while await self.connected {
                     let result = await self.recvmsg()
-                    #if DEBUG
-                    if result < 0 {
-                        let errNo = srt_getlasterror(nil)
-                        let errMsg = String(cString: srt_getlasterror_str())
-                        print("[SRTSocket] recvmsg returned \(result), error: \(errNo) - \(errMsg), status: \(await self.status)")
-                    }
-                    #endif
                     if 0 <= result {
                         continuation.yield(await self.incomingBuffer.subdata(in: 0..<Data.Index(result)))
                     } else {
@@ -81,9 +71,6 @@ final actor SRTSocket {
                         continuation.finish()
                     }
                 }
-                #if DEBUG
-                print("[SRTSocket] inputs - exited receive loop, connected: \(await self.connected), status: \(await self.status)")
-                #endif
             }
         }
     }
