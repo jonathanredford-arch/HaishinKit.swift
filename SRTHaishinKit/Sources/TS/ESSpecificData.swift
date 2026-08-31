@@ -58,8 +58,22 @@ extension ESSpecificData: DataConvertible {
             let buffer = ByteArray(data: newValue)
             do {
                 streamType = ESStreamType(rawValue: try buffer.readUInt8()) ?? .unspecific
-                elementaryPID = try buffer.readUInt16() & 0x0fff
-                esInfoLength = try buffer.readUInt16() & 0x01ff
+                // elementary_PID is 13 bits (ISO/IEC 13818-1 Table 2-33), so
+                // the mask is 0x1FFF. It was 0x0FFF, which silently truncated
+                // every PID at or above 0x1000: a live stream carrying audio
+                // on PID 0x1010 was read as 0x10, no packets ever arrived on
+                // that PID, and the audio simply never played. Video on PID
+                // 0x200 was unaffected, so the stream looked half-broken with
+                // nothing in any log to explain it.
+                //
+                // The sibling parsers in TSProgram.swift already use 0x1FFF
+                // for program_map_PID and PCR_PID, which is what makes this a
+                // typo rather than a deliberate limit.
+                elementaryPID = try buffer.readUInt16() & 0x1fff
+                // ES_info_length is 12 bits, not 9. The old 0x01FF mask only
+                // mattered for descriptor blocks of 512 bytes or more, where
+                // it would truncate the length and then misalign the read.
+                esInfoLength = try buffer.readUInt16() & 0x0fff
                 esDescriptors = try buffer.readBytes(Int(esInfoLength))
             } catch {
                 logger.error("\(buffer)")
