@@ -46,7 +46,6 @@ final class TSReader {
         }
     }
     /// One-shot diagnostics so the audio chain can be traced without spam.
-    private var loggedFirstAudioSample = false
     private var loggedAudioFormatFailure = false
     private var programs: [UInt16: UInt16] = [:]
     private var esSpecData: [UInt16: ESSpecificData] = [:]
@@ -170,16 +169,6 @@ final class TSReader {
         )
         sampleBuffer?.isNotSync = isNotSync
         previousPresentationTimeStamps[id] = sampleBuffer?.presentationTimeStamp
-
-        if data.streamType == .adtsAac, !loggedFirstAudioSample {
-            loggedFirstAudioSample = true
-            let mt = sampleBuffer?.formatDescription?.mediaType
-            HKDiagnostics.log(
-                "TS",
-                "first audio sample buffer from PID 0x\(String(id, radix: 16)): "
-                + "\(sampleBuffer == nil ? "nil buffer" : "built"), "
-                + "mediaType \(mt.map { "\($0)" } ?? "nil")")
-        }
 
         return sampleBuffer
     }

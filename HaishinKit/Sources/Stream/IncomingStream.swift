@@ -30,29 +30,32 @@ package final actor IncomingStream {
     public func append(_ buffer: CMSampleBuffer) {
         switch buffer.formatDescription?.mediaType {
         case .audio:
-            if !loggedFirstAudioAppend {
-                loggedFirstAudioAppend = true
-                HKDiagnostics.log("Audio", "first audio sample buffer reached the codec")
-            }
             audioCodec.append(buffer)
         case .video:
             videoCodec.append(buffer)
         default:
-            // Neither audio nor video, which in practice means the sample
-            // buffer has no format description. Silently discarding these is
-            // how audio disappears without a trace.
+            // No format description, so the buffer matches neither case and
+            // cannot be routed. A few of these at startup are normal: an
+            // H.264 format description needs both SPS and PPS, so the first
+            // access units before the parameter sets arrive legitimately have
+            // none. Only a continuing stream of them means something is
+            // actually wrong — that is how audio on a mis-parsed PID
+            // disappears without a trace.
             droppedUnclassified += 1
-            if droppedUnclassified == 1 || droppedUnclassified % 200 == 0 {
+            if droppedUnclassified == Self.droppedStartupAllowance
+                || droppedUnclassified % 200 == 0 {
                 HKDiagnostics.log(
                     "Error",
                     "dropped \(droppedUnclassified) sample buffer(s) with no usable "
-                    + "format description (mediaType "
-                    + "\(buffer.formatDescription.map { "\($0.mediaType)" } ?? "nil"))")
+                    + "format description — more than the startup allowance, so "
+                    + "a track is likely being discarded")
             }
         }
     }
 
-    private var loggedFirstAudioAppend = false
+    /// Dropped buffers tolerated before reporting. Covers the access units
+    /// that precede the first SPS/PPS without crying wolf.
+    private static let droppedStartupAllowance = 10
     private var droppedUnclassified = 0
 
     /// Appends an audio buffer for playback.
